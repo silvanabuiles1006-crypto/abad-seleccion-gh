@@ -985,14 +985,19 @@ function refreshAllViews() {
   applyCatalogToForms();
 }
 
-async function initSharePoint() {
-  try {
-    showLoading('Conectando con SharePoint...', 'Verificando credenciales de Abad Laboratorio');
+let msalInitPromise = null;
 
-    // Load MSAL dynamically
+// Ensures MSAL is loaded and msalInstance exists. Safe to call multiple times.
+async function ensureMsal() {
+  if (msalInstance) return msalInstance;
+  if (msalInitPromise) return msalInitPromise;
+
+  msalInitPromise = (async () => {
     await loadScript('https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js');
-
-    msalInstance = new msal.PublicClientApplication({
+    if (typeof msal === 'undefined') {
+      throw new Error('No se pudo cargar la librería de autenticación de Microsoft (sin conexión a internet o bloqueada por el navegador).');
+    }
+    const instance = new msal.PublicClientApplication({
       auth: {
         clientId: SP_CONFIG.clientId,
         authority: `https://login.microsoftonline.com/${SP_CONFIG.tenantId}`,
@@ -1000,8 +1005,24 @@ async function initSharePoint() {
       },
       cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: false }
     });
+    await instance.initialize();
+    msalInstance = instance;
+    return instance;
+  })();
 
-    await msalInstance.initialize();
+  try {
+    return await msalInitPromise;
+  } catch(e) {
+    msalInitPromise = null; // allow retry on next call
+    throw e;
+  }
+}
+
+async function initSharePoint() {
+  try {
+    showLoading('Conectando con SharePoint...', 'Verificando credenciales de Abad Laboratorio');
+
+    await ensureMsal();
 
     // Try silent login first (works if user already logged in this session)
     const accounts = msalInstance.getAllAccounts();
@@ -1037,6 +1058,10 @@ async function initSharePoint() {
 async function loginSP() {
   try {
     showLoading('Iniciando sesión...', 'Conectando con tu cuenta de Abad Laboratorio');
+
+    // Defensive: (re)initialize MSAL if it isn't ready yet, instead of failing
+    await ensureMsal();
+
     const resp = await msalInstance.loginPopup({
       scopes: ['https://graph.microsoft.com/Sites.ReadWrite.All',
                'https://graph.microsoft.com/User.Read']
@@ -1052,7 +1077,8 @@ async function loginSP() {
     refreshAllViews();
     showToast('✓ Conectado como ' + currentUser.name + ' — datos sincronizados');
   } catch(e) {
-    showToast('⚠ Error al conectar: ' + e.message);
+    console.error('Login error:', e);
+    showToast('⚠ Error al conectar: ' + (e.message||'desconocido'));
   } finally {
     hideLoading();
   }
