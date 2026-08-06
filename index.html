@@ -1108,13 +1108,47 @@ function updateAuthUI(loggedIn) {
   }
 }
 
-function loadScript(src) {
+function loadScriptOnce(src, timeoutMs) {
   return new Promise((res, rej) => {
-    if(document.querySelector(`script[src="${src}"]`)){res();return;}
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if(existing){
+      if(typeof msal !== 'undefined'){ res(); return; }
+      // Script tag exists but global not ready yet — wait briefly
+    }
     const s = document.createElement('script');
-    s.src = src; s.onload = res; s.onerror = rej;
+    s.src = src;
+    let done = false;
+    const timer = setTimeout(()=>{
+      if(!done){ done = true; rej(new Error('timeout')); }
+    }, timeoutMs || 8000);
+    s.onload = () => { if(!done){ done = true; clearTimeout(timer); res(); } };
+    s.onerror = () => { if(!done){ done = true; clearTimeout(timer); rej(new Error('network error')); } };
     document.head.appendChild(s);
   });
+}
+
+// Try multiple CDN mirrors in sequence — some corporate networks/adblockers
+// block one CDN but allow another.
+const MSAL_CDN_MIRRORS = [
+  'https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js',
+  'https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js',
+  'https://unpkg.com/@azure/msal-browser@2.38.3/lib/msal-browser.min.js'
+];
+
+async function loadScript(preferredSrc) {
+  const sources = [preferredSrc, ...MSAL_CDN_MIRRORS.filter(u=>u!==preferredSrc)];
+  let lastErr = null;
+  for(const src of sources){
+    try {
+      await loadScriptOnce(src, 8000);
+      if(typeof msal !== 'undefined') return;
+      lastErr = new Error('script cargó pero "msal" no está definido');
+    } catch(e){
+      lastErr = e;
+      console.warn('No se pudo cargar desde', src, e.message);
+    }
+  }
+  throw new Error('No se pudo cargar la librería de Microsoft desde ninguna fuente. Verifica tu conexión a internet o pide a IT que permita el dominio alcdn.msauth.net / jsdelivr.net / unpkg.com. Detalle: '+(lastErr?lastErr.message:'desconocido'));
 }
 
 // ── Graph API helpers ─────────────────────────────────────────
