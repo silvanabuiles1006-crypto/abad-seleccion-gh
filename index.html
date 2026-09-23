@@ -64,7 +64,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#f0f0f0;color:#1a1a1
 .b-proc{background:#e3f2fd;color:#0d47a1}
 .btn-sm{padding:5px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid #ddd;background:#fff;transition:all .15s}
 .btn-sm:hover{background:#f5f5f5}
-.btn-sm-r{border-color:#ffcdd2;color:#c62828}
+.btn-sm-r{border-color:#ffcdd2;color:#c62828;white-space:nowrap}
 .btn-sm-r:hover{background:#ffebee}
 .empty-st{text-align:center;padding:48px 20px;color:#999}
 
@@ -350,11 +350,23 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .sp-sync-btn{background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);color:#fff;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;margin-left:8px}
 .sp-sync-btn:hover{background:rgba(255,255,255,.3)}
 .sp-sync-btn.syncing{opacity:.6;cursor:default}
-@media print{.nav,.btn-row,.btn,.nav-new{display:none!important}.stage{display:block!important;break-inside:avoid}}
+@media print{
+  .nav,.btn-row,.btn,.nav-new,.modal-ov,.sp-loading,#build-stamp{display:none!important}
+  .stage{display:block!important;break-inside:avoid}
+  #print-area{display:none}
+  body.printing > *:not(#print-area){display:none!important}
+  body.printing #print-area{display:block!important;position:static;inset:auto;background:#fff;padding:0;margin:0}
+  body.printing{background:#fff}
+  .pdf-block{break-inside:avoid;margin-bottom:10px}
+  .pdf-page{padding:20px}
+}
+#print-area{display:none}
 </style>
 </head>
 <body>
 
+<div id="print-area"></div>
+<div id="build-stamp" style="position:fixed;bottom:6px;right:10px;font-size:10px;color:#bbb;z-index:50;background:rgba(255,255,255,.85);padding:2px 8px;border-radius:4px;pointer-events:none;font-family:monospace">Build: 2026-09-23 — v13 (eliminar SP + PDF)</div>
 
 <!-- ══ LOADING OVERLAY ══════════════════════════════════════ -->
 <div id="sp-loading" class="sp-loading">
@@ -676,6 +688,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
       <div class="sc-i"><strong style="color:#2e7d32">75 – 100%</strong>Desarrollada / domina la competencia</div>
     </div>
     <p style="margin-top:8px">Los nombres de las competencias se cargan automáticamente según el cargo seleccionado (del Manual de Perfil V.10). Puede editarlos si la firma evaluó competencias con nombres diferentes. El porcentaje viene del informe de la firma (Comfama, Magneto u otra).<br><br><strong>Nota sobre escala unificada:</strong> Todas las etapas con ítems numéricos usan escala <strong>0 a 20 por ítem</strong>. GH: 5 ítems = 100 pts. Jefe, Evaluación técnica y Visita domiciliaria: 4 ítems = 80 pts. Los puntajes se normalizan al 100% automáticamente para el cálculo final.</p>
+    <div style="margin-top:12px;padding:10px 14px;background:#fff;border:1px solid #ffcc80;border-radius:8px">
+      <strong style="color:#B11E29;display:block;margin-bottom:4px">Criterio de aprobación</strong>
+      <p style="margin:0;font-size:13px;line-height:1.6">Se establece como resultado mínimo requerido para superar esta etapa un <strong>65% del resultado general</strong>. La interpretación del nivel de competencia se realizará de acuerdo con los siguientes rangos: <strong style="color:#e53935">0–49%: no desarrollada</strong>; <strong style="color:#f57f17">50–74%: en desarrollo</strong>; <strong style="color:#2e7d32">75–100%: desarrollada</strong>.</p>
+    </div>
   </div>
   <div class="g2">
     <div class="field"><label>Firma aplicadora *</label>
@@ -863,7 +879,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 <!-- MODAL -->
 <div class="modal-ov" id="modal-det">
   <div class="modal">
-    <div class="modal-hdr"><h3 id="modal-title">Detalle del proceso</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-hdr"><h3 id="modal-title">Detalle del proceso</h3><div style="display:flex;align-items:center;gap:8px"><button class="btn" style="background:#fff;border:1px solid #B11E29;color:#B11E29;font-size:12px;padding:7px 14px" onclick="descargarPDF(currentDetId)">📄 Descargar PDF</button><button class="modal-close" onclick="closeModal()">✕</button></div></div>
     <div class="modal-body" id="modal-body"></div>
   </div>
 </div>
@@ -1195,6 +1211,35 @@ async function spPatch(path, body) {
   return r.ok;
 }
 
+async function spDelete(path) {
+  const r = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer ' + spAccessToken }
+  });
+  if(!r.ok && r.status !== 404) {
+    const errText = await r.text();
+    console.error('SP DELETE failed:', path, r.status, errText);
+    throw new Error(`[${r.status}] ${errText}`);
+  }
+  return true;
+}
+
+async function spDeleteItem(listKey, recordId) {
+  if(!spReady) return;
+  try {
+    const siteId = await getSiteId();
+    const listId = await getListId(SP_CONFIG.lists[listKey]);
+    if(!listId) throw new Error(`No se encontró la lista "${SP_CONFIG.lists[listKey]}"`);
+    const existing = await spGet(`/sites/${siteId}/lists/${listId}/items?$filter=fields/RecordId eq '${recordId}'&$expand=fields`);
+    if(existing.value.length > 0) {
+      await spDelete(`/sites/${siteId}/lists/${listId}/items/${existing.value[0].id}`);
+    }
+  } catch(e) {
+    console.error('SP delete error:', e);
+    showToast('⚠ Error eliminando en SharePoint: '+(e.message||'desconocido').substring(0,120));
+  }
+}
+
 // Cache SP site ID
 let spSiteId = null;
 async function getSiteId() {
@@ -1224,12 +1269,71 @@ async function spGetSeleccion() {
   try {
     const siteId = await getSiteId();
     const listId = await getListId(SP_CONFIG.lists.seleccion);
-    const data = await spGet(`/sites/${siteId}/lists/${listId}/items?$expand=fields&$top=500`);
-    return data.value.map(item => JSON.parse(item.fields.DataJson||'{}'));
+    const items = await spGetAllItems(siteId, listId);
+    const porId = {};
+    items.forEach(item => {
+      const f = item.fields || {};
+      if(f.Resultado === 'TEST') return;               // registros de prueba de conexión
+      let rec = {};
+      try { rec = JSON.parse(f.DataJson || '{}') || {}; } catch(err) { rec = {}; }
+      if(!rec.id) rec.id = f.RecordId || ('SP-' + item.id);   // garantiza que todo registro sea eliminable
+      if(_deletedIds.has(rec.id)) return;
+      rec._spItemId = item.id;
+      rec._spMod = item.lastModifiedDateTime || '';
+      const prev = porId[rec.id];
+      if(!prev || rec._spMod > prev._spMod) porId[rec.id] = rec;  // si hay duplicados, se conserva el más reciente
+    });
+    return Object.values(porId);
   } catch(e) { console.warn('SP read error, using local:', e); return getDBLocal(); }
 }
 
-async function spSaveSeleccion(rec) {
+// Lee todos los ítems de la lista (con paginación)
+async function spGetAllItems(siteId, listId) {
+  let url = `/sites/${siteId}/lists/${listId}/items?$expand=fields&$top=500`;
+  let out = [];
+  while(url) {
+    const data = await spGet(url);
+    out = out.concat(data.value || []);
+    const next = data['@odata.nextLink'];
+    url = next ? next.replace('https://graph.microsoft.com/v1.0','') : null;
+  }
+  return out;
+}
+
+// Registros eliminados en esta sesión: evita que un autoguardado pendiente los vuelva a crear
+const _deletedIds = new Set();
+
+// Elimina en SharePoint TODOS los ítems asociados al registro (incluye duplicados)
+async function spDeleteSeleccionAll(recordId) {
+  const siteId = await getSiteId();
+  const listId = await getListId(SP_CONFIG.lists.seleccion);
+  if(!listId) throw new Error(`No se encontró la lista "${SP_CONFIG.lists.seleccion}"`);
+  const items = await spGetAllItems(siteId, listId);
+  const objetivo = items.filter(item => {
+    const f = item.fields || {};
+    if(f.RecordId === recordId) return true;
+    if(('SP-' + item.id) === recordId) return true;
+    try { const d = JSON.parse(f.DataJson || '{}'); if(d && d.id === recordId) return true; } catch(err) {}
+    return false;
+  });
+  for(const item of objetivo) {
+    await spDelete(`/sites/${siteId}/lists/${listId}/items/${item.id}`);
+  }
+  return objetivo.length;
+}
+
+function _recJson(rec){ const c=Object.assign({},rec); delete c._spItemId; delete c._spMod; return JSON.stringify(c); }
+const _spSaveChain = {};
+function spSaveSeleccion(rec) {
+  // Serializa los guardados por registro para evitar ítems duplicados en SharePoint
+  if(!rec || !rec.id || _deletedIds.has(rec.id)) return Promise.resolve();
+  const prev = _spSaveChain[rec.id] || Promise.resolve();
+  const next = prev.catch(()=>{}).then(() => _spSaveSeleccionNow(rec));
+  _spSaveChain[rec.id] = next;
+  return next;
+}
+async function _spSaveSeleccionNow(rec) {
+  if(_deletedIds.has(rec.id)) return;
   // Save to SP + local cache
   saveDBLocal_single(rec);
   if(!spReady) return;
@@ -1241,10 +1345,10 @@ async function spSaveSeleccion(rec) {
     if(existing.value.length > 0) {
       const itemId = existing.value[0].id;
       await spPatch(`/sites/${siteId}/lists/${listId}/items/${itemId}/fields`,
-        { RecordId: rec.id, Nombre: rec.nombre||'', Cargo: rec.cargo||'', Resultado: rec.resultado||'EN PROCESO', DataJson: JSON.stringify(rec) });
+        { RecordId: rec.id, Nombre: rec.nombre||'', Cargo: rec.cargo||'', Resultado: rec.resultado||'EN PROCESO', DataJson: _recJson(rec) });
     } else {
       await spPost(`/sites/${siteId}/lists/${listId}/items`,
-        { fields: { RecordId: rec.id, Nombre: rec.nombre||'', Cargo: rec.cargo||'', Resultado: rec.resultado||'EN PROCESO', DataJson: JSON.stringify(rec) }});
+        { fields: { RecordId: rec.id, Nombre: rec.nombre||'', Cargo: rec.cargo||'', Resultado: rec.resultado||'EN PROCESO', DataJson: _recJson(rec) }});
     }
   } catch(e) {
     console.error('SP save error (Seleccion):', e);
@@ -1318,6 +1422,7 @@ async function spSaveCatalogos(cat) {
 // ── Local fallbacks (renamed) ─────────────────────────────────
 function getDBLocal(){try{return JSON.parse(localStorage.getItem(DB_KEY)||'[]')}catch(e){return[]}}
 function saveDBLocal_single(rec){
+  if(rec && _deletedIds.has(rec.id)) return;
   const db=getDBLocal();
   const idx=db.findIndex(x=>x.id===rec.id);
   if(idx>=0)db[idx]=rec;else db.push(rec);
@@ -2718,7 +2823,8 @@ function renderPanel(){
       <td style="white-space:nowrap">
         ${isPartial?`<button class="btn-sm" style="background:#e3f2fd;color:#1565c0;border-color:#90caf9;font-weight:700" onclick="loadPartial('${r.id}')">▶ Continuar</button> `:''}
         <button class="btn-sm" onclick="verDet('${r.id}')">👁 Ver</button>
-        <button class="btn-sm btn-sm-r" onclick="eliminar('${r.id}')">✕</button>
+        <button class="btn-sm" style="border-color:#90caf9;color:#1565c0" title="Descargar reporte en PDF" onclick="descargarPDF('${r.id}')">📄 PDF</button>
+        <button class="btn-sm btn-sm-r" title="Eliminar proceso" onclick="eliminar('${r.id}')">🗑️ Eliminar</button>
       </td>
     </tr>`;
   });
@@ -2727,8 +2833,10 @@ function renderPanel(){
 }
 
 
+let currentDetId=null;
 function verDet(id){
   const db=getDB(); const r=db.find(x=>x.id===id); if(!r)return;
+  currentDetId=id;
   const bc=r.resultado==='APTO'?'b-apto':r.resultado==='NO APTO'?'b-noap':r.resultado==='CONDICIONADO'?'b-cond':'b-proc';
   document.getElementById('modal-title').textContent=(r.nombre||'—')+' — '+(r.cargo||'—');
   const et=r.etapas||{};
@@ -2839,9 +2947,143 @@ function verDet(id){
 function closeModal(){document.getElementById('modal-det').classList.remove('open');}
 document.getElementById('modal-det').addEventListener('click',function(e){if(e.target===this)closeModal();});
 
-function eliminar(id){
-  if(!confirm('¿Eliminar este proceso? Esta acción no se puede deshacer.'))return;
-  saveDB(getDB().filter(r=>r.id!==id));renderPanel();
+// ══════════════════════════════════════════════════════════════
+// DESCARGAR PDF — genera un documento imprimible con el detalle
+// completo del candidato y abre el diálogo de impresión/guardar
+// como PDF del navegador.
+// ══════════════════════════════════════════════════════════════
+function descargarPDF(id){
+  if(!id){showToast('⚠ No se encontró el registro a exportar.');return;}
+  const db=getDB(); const r=db.find(x=>x.id===id); if(!r){showToast('⚠ Registro no encontrado.');return;}
+  const et=r.etapas||{};
+  const bc=r.resultado==='APTO'?'#2e7d32':r.resultado==='NO APTO'?'#c62828':r.resultado==='CONDICIONADO'?'#ef6c00':'#1565c0';
+
+  const GH_N=['Condiciones personales y disponibilidad','Perfil personal y formación','Experiencia laboral','Motivación e interés por el cargo','Manejo de situaciones y ajuste cultural'];
+  const JI_N=['Feeling y afinidad con el equipo','Validación de conocimientos técnicos','Actitud, motivación y forma de trabajar','Resolución de problemas y ajuste al líder'];
+  const VIS_N=['Condiciones de vivienda y entorno familiar','Hábitos, estilo de vida y soporte','Coherencia de la información y presentación','Estabilidad económica y percepción general'];
+
+  function block(titulo, data, nombres, max, minPts){
+    if(!data) return '';
+    const total=data.total!=null?data.total:(data.avg!=null?data.avg:null);
+    const pasa=total!=null?(data.avg!=null?total>=65:total>=minPts):null;
+    const col=pasa===null?'#888':pasa?'#2e7d32':'#c62828';
+    let b=`<div class="pdf-block" style="border:1px solid #ddd;border-radius:6px;overflow:hidden;margin-bottom:8px">
+      <div style="background:#f0f0f0;padding:6px 10px;display:flex;justify-content:space-between;font-size:11px">
+        <strong>${titulo}</strong>
+        ${total!=null?`<strong style="color:${col}">${total}${data.avg!=null?'%':'/100'} ${pasa?'✓ PASA':'✗ NO PASA'}</strong>`:''}
+      </div>`;
+    if(data.dec||data.jefe||data.firma||data.modal){
+      b+='<div style="padding:5px 10px;font-size:10px;color:#555;border-bottom:1px solid #eee">';
+      if(data.modal)b+=`Modalidad: <strong>${data.modal}</strong> &nbsp; `;
+      if(data.dec)b+=`Decisión: <strong>${data.dec}</strong> &nbsp; `;
+      if(data.jefe)b+=`Jefe: <strong>${data.jefe}</strong> &nbsp; `;
+      if(data.firma)b+=`Firma: <strong>${data.firma}</strong>`;
+      b+='</div>';
+    }
+    if(nombres&&data.scores){
+      nombres.forEach((n,i)=>{
+        const sc=data.scores[i]||0; const ob=(data.obs||[])[i]||'';
+        b+=`<div style="padding:4px 10px;border-bottom:1px solid #f5f5f5;font-size:10px">
+          <div style="display:flex;justify-content:space-between"><span>${n}</span><strong>${sc}/${max} pts</strong></div>
+          ${ob?`<div style="color:#777;font-size:9px;margin-top:2px">${ob}</div>`:''}
+        </div>`;
+      });
+    }
+    if(data.res)b+=`<div style="padding:5px 10px;font-size:10px">Resultado: <strong>${data.res}</strong></div>`;
+    if(data.obsGen)b+=`<div style="padding:5px 10px;font-size:9px;color:#666;background:#fafafa">${data.obsGen}</div>`;
+    b+='</div>';
+    return b;
+  }
+
+  let h = `<div class="pdf-page" style="font-family:'Segoe UI',sans-serif;color:#1a1a1a;max-width:800px;margin:0 auto">
+    <div style="display:flex;align-items:center;gap:14px;border-bottom:3px solid #B11E29;padding-bottom:12px;margin-bottom:16px">
+      <div style="width:46px;height:46px;border-radius:50%;background:#f0f0f0;flex-shrink:0"></div>
+      <div>
+        <div style="font-size:18px;font-weight:800;color:#B11E29">ABAD LABORATORIO</div>
+        <div style="font-size:11px;color:#666">Sistema de Selección de Personal · SGC-GH-SEL-001 V.10</div>
+      </div>
+      <div style="margin-left:auto;text-align:right;font-size:10px;color:#888">Generado: ${new Date().toLocaleDateString('es-CO')} ${new Date().toLocaleTimeString('es-CO')}</div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <span style="background:${bc};color:#fff;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:700">${r.resultado||'EN PROCESO'}</span>
+      ${r.ponderado!=null?`<span style="font-size:20px;font-weight:800;color:#B11E29">${r.ponderado}%</span><span style="font-size:10px;color:#888">puntaje ponderado</span>`:''}
+    </div>
+
+    <div style="background:#f8f8f8;border-radius:6px;padding:10px 14px;margin-bottom:14px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#B11E29;margin-bottom:6px">Datos del candidato</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px">
+        <div>Nombre: <strong>${r.nombre||'—'}</strong></div>
+        <div>Cédula: <strong>${r.cedula||'—'}</strong></div>
+        <div>Cargo: <strong>${r.cargo||'—'}</strong></div>
+        <div>Sede: <strong>${r.sede||'—'}</strong></div>
+        <div>Evaluador GH: <strong>${r.evaluador||'—'}</strong></div>
+        <div>Fecha inicio: <strong>${r.fechaInicio||'—'}</strong></div>
+        <div>Fecha fin: <strong>${r.fechaFin||'—'}</strong></div>
+        <div>Jefe inmediato: <strong>${r.jefeNombre||'—'}</strong></div>
+      </div>
+    </div>
+
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;color:#B11E29;margin-bottom:6px">Detalle por etapa</div>
+    ${block('2. Entrevista GH', et.gh, GH_N, 20, 60)}
+    ${block('3. Entrevista jefe inmediato', et.ji, JI_N, 25, 60)}
+    ${et.beh?block('4. Evaluación técnica', {total:et.tec?.total,scores:et.tec?.scores,obsGen:et.tec?.obsGen}, et.tec?.names, 25, 65):''}
+    ${et.beh?block('5. Competencias comportamentales', et.beh, et.beh.names, null, 65):''}
+    ${et.pol?block('6. Polígrafo / VSA', {res:et.pol.res, obsGen:et.pol.obs}, null, null, null):''}
+    ${et.vis?block('7. Visita domiciliaria', et.vis, VIS_N, 25, 60):''}
+    ${et.med?block('8. Examen médico', {res:et.med.res, obsGen:et.med.obs, firma:et.med.ips}, null, null, null):''}
+
+    ${r.etapaDetenida?`<div class="pdf-block" style="background:#ffebee;border:1px solid #ffcdd2;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:10px;color:#c62828"><strong>Motivo NO APTO:</strong> ${r.etapaDetenida}</div>`:''}
+    ${r.decision?`<div class="pdf-block" style="background:#f8f8f8;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:10px"><strong style="color:#B11E29">Decisión final:</strong> ${r.decision}</div>`:''}
+
+    <div style="margin-top:20px;padding-top:12px;border-top:1px solid #ddd;display:flex;justify-content:space-between;font-size:9px;color:#888">
+      <span>Firma Coordinadora GH: ${r.firmas?.gh||'_______________________'}</span>
+      <span>Firma Dir. Administrativa: ${r.firmas?.da||'_______________________'}</span>
+    </div>
+    <div style="text-align:center;font-size:8px;color:#aaa;margin-top:16px">Documento generado automáticamente por el Sistema de Selección de Personal de Abad Laboratorio — SGC-GH-SEL-001</div>
+  </div>`;
+
+  const area=document.getElementById('print-area');
+  area.innerHTML=h;
+  document.body.classList.add('printing');
+  document.title = 'Abad_'+(r.nombre||'Candidato').replace(/\s+/g,'_')+'_'+(r.resultado||'proceso');
+
+  setTimeout(()=>{
+    window.print();
+  }, 150);
+}
+
+window.addEventListener('afterprint', function(){
+  document.body.classList.remove('printing');
+  document.getElementById('print-area').innerHTML='';
+  document.title = 'Abad Laboratorio — Sistema de Selección SGC-GH-SEL-001 V.10';
+});
+
+async function eliminar(id){
+  if(!id){showToast('⚠ No se pudo identificar el registro a eliminar.');return;}
+  const r=getDB().find(x=>x.id===id);
+  const nom=r&&r.nombre?r.nombre:'este proceso';
+  if(!confirm(`¿Eliminar ${nom}? Esta acción no se puede deshacer.`))return;
+  if(!spReady){
+    showToast('⚠ Debes estar conectado a SharePoint para eliminar. Inicia sesión e inténtalo de nuevo.');
+    return;
+  }
+  showLoading('Eliminando registro...', 'Actualizando SharePoint');
+  try{
+    _deletedIds.add(id);
+    if(_spSaveChain[id]) { try{ await _spSaveChain[id]; }catch(err){} }   // espera guardados pendientes
+    const n = await spDeleteSeleccionAll(id);
+    localStorage.setItem(DB_KEY, JSON.stringify(getDB().filter(x=>x.id!==id)));
+    if(typeof currentId!=='undefined' && currentId===id) currentId=null;
+    refreshAllViews();
+    showToast(n>0 ? `✓ Proceso eliminado de SharePoint (${n} ítem${n>1?'s':''})` : '✓ Proceso eliminado (no existía en SharePoint)');
+  }catch(e){
+    _deletedIds.delete(id);
+    console.error('Error eliminando proceso:', e);
+    showToast('⚠ No se pudo eliminar en SharePoint: '+(e.message||'desconocido').substring(0,120));
+  }finally{
+    hideLoading();
+  }
 }
 
 // ══════════════════════════ INIT ══════════
