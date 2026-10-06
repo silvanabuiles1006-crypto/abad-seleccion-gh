@@ -366,7 +366,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 <body>
 
 <div id="print-area"></div>
-<div id="build-stamp" style="position:fixed;bottom:6px;right:10px;font-size:10px;color:#bbb;z-index:50;background:rgba(255,255,255,.85);padding:2px 8px;border-radius:4px;pointer-events:none;font-family:monospace">Build: 2026-09-23 — v13 (eliminar SP + PDF)</div>
+<div id="build-stamp" style="position:fixed;bottom:6px;right:10px;font-size:10px;color:#bbb;z-index:50;background:rgba(255,255,255,.85);padding:2px 8px;border-radius:4px;pointer-events:none;font-family:monospace">Build: 2026-10-05 — v14 (renovación automática de sesión)</div>
 
 <!-- ══ LOADING OVERLAY ══════════════════════════════════════ -->
 <div id="sp-loading" class="sp-loading">
@@ -1167,13 +1167,48 @@ async function loadScript(preferredSrc) {
   throw new Error('No se pudo cargar la librería de Microsoft desde ninguna fuente. Verifica tu conexión a internet o pide a IT que permita el dominio alcdn.msauth.net / jsdelivr.net / unpkg.com. Detalle: '+(lastErr?lastErr.message:'desconocido'));
 }
 
+// ── Token: se renueva automáticamente antes de cada llamada ───
+const SP_SCOPES = ['https://graph.microsoft.com/Sites.ReadWrite.All','https://graph.microsoft.com/User.Read'];
+let _tokenPromise = null;
+async function getSpToken(forceRefresh) {
+  if(_tokenPromise && !forceRefresh) return _tokenPromise;
+  _tokenPromise = (async () => {
+    await ensureMsal();
+    const account = currentUser || msalInstance.getAllAccounts()[0];
+    if(!account) throw new Error('No hay sesión activa. Haga clic en "Conectar".');
+    try {
+      const resp = await msalInstance.acquireTokenSilent({ scopes: SP_SCOPES, account, forceRefresh: !!forceRefresh });
+      spAccessToken = resp.accessToken;
+      return spAccessToken;
+    } catch(e) {
+      // La sesión de Microsoft expiró: se pide iniciar sesión de nuevo en ventana emergente
+      showToast('🔐 Su sesión de Microsoft expiró. Inicie sesión de nuevo en la ventana emergente.');
+      const resp = await msalInstance.acquireTokenPopup({ scopes: SP_SCOPES, account });
+      spAccessToken = resp.accessToken;
+      currentUser = resp.account || account;
+      updateAuthUI(true);
+      return spAccessToken;
+    }
+  })();
+  try { return await _tokenPromise; }
+  finally { setTimeout(() => { _tokenPromise = null; }, 0); }
+}
+
+// Llamada a Graph con token vigente; si responde 401, renueva el token y reintenta una vez
+async function graphFetch(path, opts = {}) {
+  const url = `https://graph.microsoft.com/v1.0${path}`;
+  const doFetch = async (token) => fetch(url, Object.assign({}, opts, {
+    headers: Object.assign({}, opts.headers || {}, { Authorization: 'Bearer ' + token })
+  }));
+  let r = await doFetch(await getSpToken(false));
+  if(r.status === 401) r = await doFetch(await getSpToken(true));
+  return r;
+}
+
 // ── Graph API helpers ─────────────────────────────────────────
 async function spGet(path) {
-  const r = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
-    headers: {
-      Authorization: 'Bearer ' + spAccessToken,
-      Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly'
-    }
+  const r = await graphFetch(path, {
+    headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' }
   });
   if(!r.ok) {
     const errText = await r.text();
@@ -1184,9 +1219,9 @@ async function spGet(path) {
 }
 
 async function spPost(path, body) {
-  const r = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+  const r = await graphFetch(path, {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + spAccessToken, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
   if(!r.ok) {
@@ -1198,9 +1233,9 @@ async function spPost(path, body) {
 }
 
 async function spPatch(path, body) {
-  const r = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+  const r = await graphFetch(path, {
     method: 'PATCH',
-    headers: { Authorization: 'Bearer ' + spAccessToken, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
   if(!r.ok) {
@@ -1212,10 +1247,7 @@ async function spPatch(path, body) {
 }
 
 async function spDelete(path) {
-  const r = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
-    method: 'DELETE',
-    headers: { Authorization: 'Bearer ' + spAccessToken }
-  });
+  const r = await graphFetch(path, { method: 'DELETE' });
   if(!r.ok && r.status !== 404) {
     const errText = await r.text();
     console.error('SP DELETE failed:', path, r.status, errText);
