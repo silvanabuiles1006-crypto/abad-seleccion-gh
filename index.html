@@ -247,7 +247,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 /* MODAL */
 .modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;align-items:center;justify-content:center;padding:20px}
 .modal-ov.open{display:flex}
-.modal{background:#fff;border-radius:16px;max-width:720px;width:100%;max-height:90vh;overflow-y:auto}
+.modal{background:#fff;border-radius:16px;max-width:880px;width:100%;max-height:90vh;overflow-y:auto}
 .modal-hdr{background:#B11E29;padding:1.2rem 1.5rem;border-radius:16px 16px 0 0;display:flex;align-items:center;justify-content:space-between}
 .modal-hdr h3{font-size:16px;font-weight:700;color:#fff}
 .modal-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:2px 8px;border-radius:4px}
@@ -351,9 +351,35 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 .sp-sync-btn:hover{background:rgba(255,255,255,.3)}
 .sp-sync-btn.syncing{opacity:.6;cursor:default}
 @media print{.nav,.btn-row,.btn,.nav-new{display:none!important}.stage{display:block!important;break-inside:avoid}}
+#print-area{display:none}
+@media print{
+  @page{size:letter;margin:12mm}
+  body.printing{background:#fff!important}
+  body.printing > *:not(#print-area){display:none!important}
+  body.printing #print-area{display:block!important}
+  #print-area *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .pdf-blk{break-inside:avoid}
+}
+.det-etapa{border:1px solid #e6e6e6;border-radius:8px;overflow:hidden;margin-bottom:10px;background:#fff}
+.det-etapa-h{background:#f5f5f5;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.det-etapa-t{font-size:12.5px;font-weight:700;color:#1a1a1a}
+.det-chip{font-size:11px;font-weight:700;padding:2px 10px;border-radius:12px;white-space:nowrap}
+.det-ok{background:#e8f5e9;color:#2e7d32}.det-no{background:#ffebee;color:#c62828}.det-cond{background:#fff3e0;color:#ef6c00}.det-na{background:#f0f0f0;color:#888}
+.det-kv{display:grid;grid-template-columns:1fr 1fr;gap:5px 16px;padding:8px 12px;font-size:12px;border-bottom:1px solid #f2f2f2}
+.det-kv span{color:#888}.det-kv b{color:#1a1a1a;font-weight:600}
+.det-item{padding:7px 12px;border-bottom:1px solid #f6f6f6;font-size:12px}
+.det-item:nth-child(even){background:#fafafa}
+.det-row{display:flex;justify-content:space-between;gap:10px}
+.det-obs{font-size:11.5px;color:#555;margin-top:3px;padding-left:8px;border-left:2px solid #e0e0e0;white-space:pre-wrap}
+.det-txt{padding:8px 12px;font-size:12px;color:#333;white-space:pre-wrap;border-top:1px solid #f2f2f2}
+.det-txt span{display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#B11E29;margin-bottom:3px}
+.det-sec{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#B11E29;margin:14px 0 8px}
+.det-vacio{padding:8px 12px;font-size:12px;color:#aaa;font-style:italic}
 </style>
 </head>
 <body>
+<div id="print-area"></div>
+<div id="build-stamp" style="position:fixed;bottom:6px;right:10px;font-size:10px;color:#bbb;z-index:50;background:rgba(255,255,255,.85);padding:2px 8px;border-radius:4px;pointer-events:none;font-family:monospace">Build: 2026-10-14 — v15 (Ver completo + PDF + eliminar SP + sesión)</div>
 
 
 <!-- ══ LOADING OVERLAY ══════════════════════════════════════ -->
@@ -876,7 +902,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;heigh
 <!-- MODAL -->
 <div class="modal-ov" id="modal-det">
   <div class="modal">
-    <div class="modal-hdr"><h3 id="modal-title">Detalle del proceso</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-hdr"><h3 id="modal-title">Detalle del proceso</h3><div style="display:flex;align-items:center;gap:8px"><button class="btn" style="background:#fff;border:1px solid #B11E29;color:#B11E29;font-size:12px;padding:7px 14px" onclick="descargarPDF(currentDetId)">📄 Descargar PDF</button><button class="modal-close" onclick="closeModal()">✕</button></div></div>
     <div class="modal-body" id="modal-body"></div>
   </div>
 </div>
@@ -1142,33 +1168,66 @@ function loadScript(src) {
   });
 }
 
+// ── Token: se renueva automáticamente antes de cada llamada ───
+const SP_SCOPES = ['https://graph.microsoft.com/Sites.ReadWrite.All','https://graph.microsoft.com/User.Read'];
+let _tokenPromise = null;
+async function getSpToken(forceRefresh) {
+  if(_tokenPromise && !forceRefresh) return _tokenPromise;
+  _tokenPromise = (async () => {
+    if(!msalInstance) throw new Error('No hay sesión activa. Haga clic en "Conectar".');
+    const account = currentUser || msalInstance.getAllAccounts()[0];
+    if(!account) throw new Error('No hay sesión activa. Haga clic en "Conectar".');
+    try {
+      const resp = await msalInstance.acquireTokenSilent({ scopes: SP_SCOPES, account, forceRefresh: !!forceRefresh });
+      spAccessToken = resp.accessToken;
+      return spAccessToken;
+    } catch(e) {
+      showToast('🔐 Su sesión de Microsoft expiró. Inicie sesión de nuevo en la ventana emergente.');
+      const resp = await msalInstance.acquireTokenPopup({ scopes: SP_SCOPES, account });
+      spAccessToken = resp.accessToken;
+      currentUser = resp.account || account;
+      if(typeof updateAuthUI === 'function') updateAuthUI(true);
+      return spAccessToken;
+    }
+  })();
+  try { return await _tokenPromise; }
+  finally { setTimeout(() => { _tokenPromise = null; }, 0); }
+}
+
+// Llamada a Graph con token vigente; si responde 401 renueva el token y reintenta una vez
+async function graphFetch(path, opts = {}) {
+  const url = `https://graph.microsoft.com/v1.0${path}`;
+  const doFetch = (token) => fetch(url, Object.assign({}, opts, {
+    headers: Object.assign({}, opts.headers || {}, { Authorization: 'Bearer ' + token })
+  }));
+  let r = await doFetch(await getSpToken(false));
+  if(r.status === 401) r = await doFetch(await getSpToken(true));
+  return r;
+}
+
 // ── Graph API helpers ─────────────────────────────────────────
 async function spGet(path) {
-  const r = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
-    headers: { Authorization: 'Bearer ' + spAccessToken }
-  });
-  if(!r.ok) throw new Error(await r.text());
+  const r = await graphFetch(path, { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } });
+  if(!r.ok) throw new Error(`[${r.status}] ` + await r.text());
   return r.json();
 }
 
 async function spPost(path, body) {
-  const r = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + spAccessToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if(!r.ok) throw new Error(await r.text());
+  const r = await graphFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if(!r.ok) throw new Error(`[${r.status}] ` + await r.text());
   return r.json();
 }
 
 async function spPatch(path, body) {
-  const r = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
-    method: 'PATCH',
-    headers: { Authorization: 'Bearer ' + spAccessToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if(!r.ok) throw new Error(await r.text());
+  const r = await graphFetch(path, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if(!r.ok) throw new Error(`[${r.status}] ` + await r.text());
   return r.ok;
+}
+
+async function spDelete(path) {
+  const r = await graphFetch(path, { method: 'DELETE' });
+  if(!r.ok && r.status !== 404) throw new Error(`[${r.status}] ` + await r.text());
+  return true;
 }
 
 // Cache SP site ID
@@ -1196,15 +1255,70 @@ async function spGetSeleccion() {
   try {
     const siteId = await getSiteId();
     const listId = await getListId(SP_CONFIG.lists.seleccion);
-    const data = await spGet(`/sites/${siteId}/lists/${listId}/items?$expand=fields&$top=500`);
-    return data.value.map(item => JSON.parse(item.fields.DataJson||'{}'));
+    const items = await spGetAllItems(siteId, listId);
+    const porId = {};
+    items.forEach(item => {
+      const f = item.fields || {};
+      if(f.Resultado === 'TEST') return;                      // registros de prueba de conexión
+      let rec = {};
+      try { rec = JSON.parse(f.DataJson || '{}') || {}; } catch(err) { rec = {}; }
+      if(!rec.id) rec.id = f.RecordId || ('SP-' + item.id);   // todo registro queda eliminable
+      if(_deletedIds.has(rec.id)) return;
+      rec._spMod = item.lastModifiedDateTime || '';
+      const prev = porId[rec.id];
+      if(!prev || rec._spMod > prev._spMod) porId[rec.id] = rec; // duplicados: se conserva el más reciente
+    });
+    return Object.values(porId);
   } catch(e) { console.warn('SP read error, using local:', e); return getDBLocal(); }
 }
 
-async function spSaveSeleccion(rec) {
-  // Save to SP + local cache
+// Lee todos los ítems de una lista (con paginación)
+async function spGetAllItems(siteId, listId) {
+  let url = `/sites/${siteId}/lists/${listId}/items?$expand=fields&$top=500`;
+  let out = [];
+  while(url) {
+    const data = await spGet(url);
+    out = out.concat(data.value || []);
+    const next = data['@odata.nextLink'];
+    url = next ? next.replace('https://graph.microsoft.com/v1.0','') : null;
+  }
+  return out;
+}
+
+// Registros eliminados en esta sesión: evita que un autoguardado pendiente los vuelva a crear
+const _deletedIds = new Set();
+
+// Elimina en SharePoint TODOS los ítems del registro (incluye duplicados)
+async function spDeleteSeleccionAll(recordId) {
+  const siteId = await getSiteId();
+  const listId = await getListId(SP_CONFIG.lists.seleccion);
+  if(!listId) throw new Error(`No se encontró la lista "${SP_CONFIG.lists.seleccion}"`);
+  const items = await spGetAllItems(siteId, listId);
+  const objetivo = items.filter(item => {
+    const f = item.fields || {};
+    if(f.RecordId === recordId) return true;
+    if(('SP-' + item.id) === recordId) return true;
+    try { const d = JSON.parse(f.DataJson || '{}'); if(d && d.id === recordId) return true; } catch(err) {}
+    return false;
+  });
+  for(const item of objetivo) await spDelete(`/sites/${siteId}/lists/${listId}/items/${item.id}`);
+  return objetivo.length;
+}
+
+function _recJson(rec){ const c=Object.assign({},rec); delete c._spMod; return JSON.stringify(c); }
+const _spSaveChain = {};
+function spSaveSeleccion(rec) {
+  // Serializa los guardados de cada registro para no crear ítems duplicados
+  if(!rec || !rec.id || _deletedIds.has(rec.id)) return Promise.resolve(false);
+  const prev = _spSaveChain[rec.id] || Promise.resolve();
+  const next = prev.catch(()=>{}).then(() => _spSaveSeleccionNow(rec));
+  _spSaveChain[rec.id] = next;
+  return next;
+}
+async function _spSaveSeleccionNow(rec) {
+  if(_deletedIds.has(rec.id)) return false;
   saveDBLocal_single(rec);
-  if(!spReady) return;
+  if(!spReady) return false;
   try {
     const siteId = await getSiteId();
     const listId = await getListId(SP_CONFIG.lists.seleccion);
@@ -1212,12 +1326,17 @@ async function spSaveSeleccion(rec) {
     if(existing.value.length > 0) {
       const itemId = existing.value[0].id;
       await spPatch(`/sites/${siteId}/lists/${listId}/items/${itemId}/fields`,
-        { RecordId: rec.id, Nombre: rec.nombre||'', Cargo: rec.cargo||'', Resultado: rec.resultado||'EN PROCESO', DataJson: JSON.stringify(rec) });
+        { RecordId: rec.id, Nombre: rec.nombre||'', Cargo: rec.cargo||'', Resultado: rec.resultado||'EN PROCESO', DataJson: _recJson(rec) });
     } else {
       await spPost(`/sites/${siteId}/lists/${listId}/items`,
-        { fields: { RecordId: rec.id, Nombre: rec.nombre||'', Cargo: rec.cargo||'', Resultado: rec.resultado||'EN PROCESO', DataJson: JSON.stringify(rec) }});
+        { fields: { RecordId: rec.id, Nombre: rec.nombre||'', Cargo: rec.cargo||'', Resultado: rec.resultado||'EN PROCESO', DataJson: _recJson(rec) }});
     }
-  } catch(e) { console.warn('SP save error:', e); }
+    return true;
+  } catch(e) {
+    console.warn('SP save error:', e);
+    showToast('⚠ Error guardando en SharePoint: '+(e.message||'desconocido').substring(0,140));
+    return false;
+  }
 }
 
 // REQUISICIONES
@@ -1278,6 +1397,7 @@ async function spSaveCatalogos(cat) {
 // ── Local fallbacks (renamed) ─────────────────────────────────
 function getDBLocal(){try{return JSON.parse(localStorage.getItem(DB_KEY)||'[]')}catch(e){return[]}}
 function saveDBLocal_single(rec){
+  if(rec && _deletedIds.has(rec.id)) return;
   const db=getDBLocal();
   const idx=db.findIndex(x=>x.id===rec.id);
   if(idx>=0)db[idx]=rec;else db.push(rec);
@@ -1839,6 +1959,14 @@ function loadPartial(id){
       vv('ips-med',et.med.ips||'');
       vv('obs-med',et.med.obs||'');
     }
+    // Restaurar campos adicionales
+    if(r.tipoVacante) vv('tipo-vacante',r.tipoVacante);
+    if(et.gh&&et.gh.plat) vv('plat-gh',et.gh.plat);
+    if(et.tec&&et.tec.dur) vv('dur-tec',et.tec.dur);
+    if(et.beh&&et.beh.fecha) vv('fecha-psico',et.beh.fecha);
+    if(et.pol&&et.pol.fecha) vv('fecha-pol',et.pol.fecha);
+    if(et.vis&&et.vis.fecha) vv('fecha-vis',et.vis.fecha);
+    if(et.med&&et.med.fecha) vv('fecha-med',et.med.fecha);
     // Restore radio visual state
     restoreRadios();
     // Go to the stage where they left off
@@ -1981,9 +2109,11 @@ function savePartial(){
         med:{res:ST.radios['med-res']||'',ips:v('ips-med'),obs:v('obs-med')}
       }
     };
+    completarRegistro(rec);
     const idx=db.findIndex(x=>x.id===rec.id);
     if(idx>=0)db[idx]=rec; else db.push(rec);
-    saveDB(db);
+    localStorage.setItem(DB_KEY,JSON.stringify(db));
+    spSaveSeleccion(rec);
     currentId=rec.id;
     // Show subtle auto-save indicator
     let ind=document.getElementById('autosave-ind');
@@ -2392,7 +2522,21 @@ function calcFinal(){
 }
 
 // ══════════════════════════ SAVE ══════════
-function guardarProceso(){
+// Agrega al registro los campos del formulario que antes no se guardaban
+function completarRegistro(rec){
+  const et=rec.etapas=rec.etapas||{};
+  rec.tipoVacante=v('tipo-vacante');
+  et.gh=Object.assign(et.gh||{},{plat:v('plat-gh')});
+  et.ji=Object.assign(et.ji||{},{modal:ST.radios['modal-ji']||''});
+  et.tec=Object.assign(et.tec||{},{desc:v('desc-tec'),dur:v('dur-tec')});
+  et.beh=Object.assign(et.beh||{},{fecha:v('fecha-psico')});
+  et.pol=Object.assign(et.pol||{},{fecha:v('fecha-pol')});
+  et.vis=Object.assign(et.vis||{},{fecha:v('fecha-vis')});
+  et.med=Object.assign(et.med||{},{fecha:v('fecha-med')});
+  return rec;
+}
+
+async function guardarProceso(){
   // Sync obs before saving
   GH_ITEMS.forEach((_,i)=>{const el=document.getElementById('gh-obs-'+i);if(el)ST.ghObs[i]=el.value;});
   JI_ITEMS.forEach((_,i)=>{const el=document.getElementById('ji-obs-'+i);if(el)ST.jiObs[i]=el.value;});
@@ -2418,10 +2562,18 @@ function guardarProceso(){
     },
     decision:v('decision-final'),firmas:{gh:v('firma-gh-f'),da:v('firma-da-f')}
   };
+  completarRegistro(rec);
   const idx=db.findIndex(x=>x.id===rec.id);
   if(idx>=0)db[idx]=rec;else db.push(rec);
-  saveDB(db);currentId=rec.id;
-  alert('✅ Proceso guardado correctamente.\n\nPuedes consultarlo en el Panel de Candidatos.');
+  localStorage.setItem(DB_KEY,JSON.stringify(db));currentId=rec.id;
+  showLoading('Guardando proceso...','Registrando en SharePoint');
+  let okSP=false;
+  try{ okSP=await spSaveSeleccion(rec); } finally { hideLoading(); }
+  if(!okSP){
+    alert('⚠ El proceso NO quedó guardado en SharePoint.\n\nVerifique que esté conectado (botón "Conectar") y vuelva a hacer clic en "Guardar proceso".');
+    return;
+  }
+  alert('✅ Proceso guardado correctamente en SharePoint.\n\nPuedes consultarlo en el Panel de Candidatos.');
   showView('panel');
 }
 
@@ -2677,8 +2829,9 @@ function renderPanel(){
       <td style="max-width:220px">${etapaCol}</td>
       <td style="white-space:nowrap">
         ${isPartial?`<button class="btn-sm" style="background:#e3f2fd;color:#1565c0;border-color:#90caf9;font-weight:700" onclick="loadPartial('${r.id}')">▶ Continuar</button> `:''}
-        <button class="btn-sm" onclick="verDet('${r.id}')">👁 Ver</button>
-        <button class="btn-sm btn-sm-r" onclick="eliminar('${r.id}')">✕</button>
+        <button class="btn-sm" title="Ver el proceso completo" onclick="verDet('${r.id}')">👁 Ver</button>
+        <button class="btn-sm" style="border-color:#90caf9;color:#1565c0" title="Descargar reporte en PDF" onclick="descargarPDF('${r.id}')">📄 PDF</button>
+        <button class="btn-sm btn-sm-r" title="Eliminar proceso" onclick="eliminar('${r.id}')">🗑️ Eliminar</button>
       </td>
     </tr>`;
   });
@@ -2687,96 +2840,179 @@ function renderPanel(){
 }
 
 
-function verDet(id){
-  const db=getDB(); const r=db.find(x=>x.id===id); if(!r)return;
-  const bc=r.resultado==='APTO'?'b-apto':r.resultado==='NO APTO'?'b-noap':r.resultado==='CONDICIONADO'?'b-cond':'b-proc';
-  document.getElementById('modal-title').textContent=(r.nombre||'—')+' — '+(r.cargo||'—');
+// ══════════════════════════════════════════════════════════════
+// DETALLE COMPLETO DEL PROCESO — usado por "Ver" y por "PDF"
+// Muestra las 8 etapas con todos los campos registrados.
+// ══════════════════════════════════════════════════════════════
+let currentDetId=null;
+
+function esc(t){
+  if(t===null||t===undefined) return '';
+  return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmtFecha(f){
+  if(!f) return '—';
+  const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(f);
+  return m?`${m[3]}/${m[2]}/${m[1]}`:esc(f);
+}
+function _val(x){ return (x===null||x===undefined||x==='')?'—':esc(x); }
+function _vacio(d){
+  if(!d) return true;
+  return !Object.keys(d).some(k=>{
+    const x=d[k];
+    if(Array.isArray(x)) return x.some(y=>y!==0&&y!==''&&y!==null&&y!==undefined);
+    if(k==='total'||k==='avg') return x>0;
+    return x!==''&&x!==null&&x!==undefined&&x!==false;
+  });
+}
+function _chip(estado){
+  const m={ok:['det-ok','✓ PASA'],no:['det-no','✗ NO PASA'],cond:['det-cond','◐ CONDICIONADO'],na:['det-na','Sin registrar'],reg:['det-ok','✓ Registrado']};
+  const c=m[estado]||m.na; return `<span class="det-chip ${c[0]}">${c[1]}</span>`;
+}
+function _kv(pares){
+  const f=pares.filter(p=>p);
+  if(!f.length) return '';
+  return `<div class="det-kv">${f.map(([k,v])=>`<div><span>${k}:</span> <b>${v}</b></div>`).join('')}</div>`;
+}
+function _txt(titulo,t){ return t?`<div class="det-txt"><span>${titulo}</span>${esc(t)}</div>`:''; }
+function _items(nombres,scores,obs,max,sufijo){
+  if(!nombres||!nombres.length) return '';
+  return `<div>${nombres.map((n,i)=>{
+    const sc=(scores||[])[i]; const ob=(obs||[])[i]||'';
+    return `<div class="det-item"><div class="det-row"><span style="color:#444;flex:1">${esc(n)||('Ítem '+(i+1))}</span>
+      <strong style="white-space:nowrap">${sc!=null?sc:0}${sufijo||('/'+max)}</strong></div>
+      ${ob?`<div class="det-obs">${esc(ob)}</div>`:''}</div>`;
+  }).join('')}</div>`;
+}
+function _etapa(num,titulo,estado,puntaje,cuerpo){
+  return `<div class="det-etapa pdf-blk">
+    <div class="det-etapa-h"><span class="det-etapa-t">${num}. ${titulo}</span>
+      <span style="display:flex;align-items:center;gap:8px">${puntaje?`<strong style="font-size:13px;color:#1a1a1a">${puntaje}</strong>`:''}${_chip(estado)}</span></div>
+    ${cuerpo}</div>`;
+}
+const _VACIO='<div class="det-vacio">Etapa sin información registrada.</div>';
+
+function detalleHTML(r,paraPDF){
   const et=r.etapas||{};
-
-  let h=`
-  <!-- Header result -->
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:1.2rem;padding-bottom:1rem;border-bottom:1px solid #f0f0f0">
-    <span class="bsm ${bc}" style="font-size:14px;padding:7px 18px">${r.resultado||'En proceso'}</span>
-    ${r.ponderado!=null?`<span style="font-size:24px;font-weight:700;color:#B11E29">${r.ponderado}%</span><span style="font-size:12px;color:#888">puntaje ponderado</span>`:''}
-  </div>
-
-  <!-- Datos generales -->
-  <div style="background:#f8f8f8;border-radius:8px;padding:12px 14px;margin-bottom:1rem">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#B11E29;margin-bottom:8px">Datos del candidato</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px">
-      <div><span style="color:#888">Cédula:</span> <strong>${r.cedula||'—'}</strong></div>
-      <div><span style="color:#888">Cargo:</span> <strong>${r.cargo||'—'}</strong></div>
-      <div><span style="color:#888">Sede:</span> <strong>${r.sede||'—'}</strong></div>
-      <div><span style="color:#888">Evaluador GH:</span> <strong>${r.evaluador||'—'}</strong></div>
-      <div><span style="color:#888">Fecha inicio:</span> <strong>${r.fechaInicio||'—'}</strong></div>
-      <div><span style="color:#888">Fecha fin:</span> <strong>${r.fechaFin||'—'}</strong></div>
-    </div>
-  </div>`;
-
-  // ── Etapas detalle ──
   const GH_N=['Condiciones personales y disponibilidad','Perfil personal y formación','Experiencia laboral','Motivación e interés por el cargo','Manejo de situaciones y ajuste cultural'];
   const JI_N=['Feeling y afinidad con el equipo','Validación de conocimientos técnicos','Actitud, motivación y forma de trabajar','Resolución de problemas y ajuste al líder'];
   const VIS_N=['Condiciones de vivienda y entorno familiar','Hábitos, estilo de vida y soporte','Coherencia de la información y presentación','Estabilidad económica y percepción general'];
+  const POL_AREAS=['Antecedentes judiciales','Honestidad laboral','Consumo de sustancias','Estado financiero / SARLAFT','Vínculos grupos ilícitos','Veracidad información'];
+  const bc=r.resultado==='APTO'?'b-apto':r.resultado==='NO APTO'?'b-noap':r.resultado==='CONDICIONADO'?'b-cond':'b-proc';
+  const etapaNom=['','Datos','Entrevista GH','Entrevista jefe','Evaluación técnica','Psicotécnicas','Polígrafo','Visita domiciliaria','Examen médico','Resultado final'];
+  let h='';
 
-  function etapaBlock(titulo, data, nombres, max, minPts){
-    if(!data) return `<div style="font-size:12px;color:#bbb;padding:8px 0">No registrada</div>`;
-    const total=data.total!=null?data.total:(data.avg!=null?data.avg:null);
-    const pasa=total!=null?(data.avg!=null?total>=65:total>=minPts):null;
-    const col=pasa===null?'#888':pasa?'#2e7d32':'#c62828';
-    let b=`<div style="border:1px solid #eee;border-radius:8px;overflow:hidden;margin-bottom:10px">
-      <div style="background:#f5f5f5;padding:8px 12px;display:flex;align-items:center;justify-content:space-between">
-        <span style="font-size:12px;font-weight:700;color:#1a1a1a">${titulo}</span>
-        ${total!=null?`<span style="font-size:14px;font-weight:700;color:${col}">${total}${data.avg!=null?'%':'/100'} ${pasa?'✓':'✗'}</span>`:''}
-      </div>`;
-    if(data.dec||data.jefe||data.firma||data.modal){
-      b+=`<div style="padding:6px 12px;font-size:11px;color:#666;border-bottom:1px solid #f0f0f0;display:flex;gap:14px;flex-wrap:wrap">`;
-      if(data.modal)b+=`<span>Modalidad: <strong>${data.modal}</strong></span>`;
-      if(data.dec)b+=`<span>Decisión: <strong style="color:${data.dec.includes('NO')||data.dec.includes('No')?'#c62828':'#2e7d32'}">${data.dec}</strong></span>`;
-      if(data.jefe)b+=`<span>Jefe: <strong>${data.jefe}</strong></span>`;
-      if(data.firma)b+=`<span>Firma: <strong>${data.firma}</strong></span>`;
-      b+=`</div>`;
-    }
-    if(nombres&&data.scores){
-      nombres.forEach((n,i)=>{
-        const sc=data.scores[i]||0; const ob=(data.obs||[])[i]||'';
-        b+=`<div style="padding:7px 12px;border-bottom:1px solid #f8f8f8;font-size:12px;${i%2===0?'background:#fafafa':''}">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="color:#444;flex:1">${n}</span>
-            <span style="font-weight:700;color:#1a1a1a;min-width:50px;text-align:right">${sc}/${max} pts</span>
-          </div>
-          ${ob?`<div style="font-size:11px;color:#666;margin-top:3px;padding-left:8px;border-left:2px solid #e0e0e0">${ob}</div>`:''}
-        </div>`;
-      });
-    }
-    if(data.res){b+=`<div style="padding:7px 12px;font-size:12px"><span style="color:#888">Resultado:</span> <strong>${data.res}</strong></div>`;}
-    if(data.obsGen){b+=`<div style="padding:7px 12px;font-size:11px;color:#555;border-top:1px solid #f0f0f0;background:#fafafa">${data.obsGen}</div>`;}
-    if(data.obs&&!nombres){b+=`<div style="padding:7px 12px;font-size:11px;color:#555">${data.obs}</div>`;}
-    b+=`</div>`;
-    return b;
+  // Encabezado del resultado
+  h+=`<div class="pdf-blk" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #f0f0f0">
+    <span class="bsm ${bc}" style="font-size:14px;padding:7px 18px">${esc(r.resultado)||'En proceso'}</span>
+    ${r.ponderado!=null?`<span style="font-size:24px;font-weight:700;color:#B11E29">${esc(r.ponderado)}%</span><span style="font-size:12px;color:#888">puntaje ponderado</span>`:''}
+    ${!r.resultado&&r.etapaActual?`<span style="font-size:12px;color:#1565c0">Guardado en etapa ${r.etapaActual} de 8 — ${etapaNom[r.etapaActual]||''}</span>`:''}
+  </div>`;
+
+  // 1. Datos del candidato y requisición
+  h+=_etapa(1,'Datos del candidato y requisición', r.nombre?'reg':'na', '',
+    _kv([
+      ['Nombre',_val(r.nombre)],['Cédula',_val(r.cedula)],
+      ['Cargo al que aplica',_val(r.cargo)],['Tipo de vacante',_val(r.tipoVacante)],
+      ['Sede / área solicitante',_val(r.sede)],['Incluye domicilios',r.esDomicilio?'Sí':'No'],
+      ['Evaluador — Gestión Humana',_val(r.evaluador)],['Fecha de inicio del proceso',fmtFecha(r.fechaInicio)],
+      ['Fecha solicitud requisición',fmtFecha(r.fechaRequisicion)],['Fecha de cierre',_val(r.fechaFin)],
+      ['Cargo del jefe inmediato',_val(r.jefeCargo)],['Nombre del jefe inmediato',_val(r.jefeNombre)]
+    ]).replace('<div class="det-kv">','<div class="det-kv" style="border-bottom:none">'));
+
+  // 2. Entrevista GH
+  const gh=et.gh;
+  if(_vacio(gh)) h+=_etapa(2,'Entrevista — Gestión Humana','na','',_VACIO);
+  else{
+    const t=gh.total!=null?gh.total:0;
+    const est=(gh.dec&&/^NO/i.test(gh.dec))||t<60?'no':'ok';
+    h+=_etapa(2,'Entrevista — Gestión Humana',est,`${t}/100`,
+      _kv([['Modalidad',_val(gh.modal)],['Plataforma',_val(gh.plat)],['Decisión de GH',_val(gh.dec)],['Mínimo para pasar','60/100']])+
+      _items(GH_N,gh.scores,gh.obs,20)+_txt('Preguntas clave aplicadas',gh.preg)+_txt('Observaciones generales',gh.obsGen));
   }
 
-  h+=`<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#B11E29;margin-bottom:8px">Detalle por etapa (solo lectura)</div>`;
-  h+=etapaBlock('2. Entrevista GH',et.gh,GH_N,20,60);
-  h+=etapaBlock('3. Entrevista jefe inmediato',et.ji,JI_N,25,60);
-  if(et.beh)h+=etapaBlock('4. Competencias comportamentales',et.beh,et.beh.names,null,65);
-  if(et.tec)h+=etapaBlock('5. Evaluación técnica',{total:et.tec.total,scores:et.tec.scores,obsGen:et.tec.obsGen,dec:et.tec.tipo},et.tec.names,25,65);
-  if(et.pol)h+=etapaBlock('6. Polígrafo / VSA',{res:et.pol.res,obsGen:et.pol.obs},null,null,null);
-  if(et.vis)h+=etapaBlock('7. Visita domiciliaria',et.vis,VIS_N,25,60);
-  if(et.med)h+=etapaBlock('8. Examen médico',{res:et.med.res,obsGen:et.med.obs,firma:et.med.ips},null,null,null);
+  // 3. Entrevista jefe inmediato
+  const ji=et.ji;
+  if(_vacio(ji)) h+=_etapa(3,'Entrevista — Jefe inmediato','na','',_VACIO);
+  else{
+    const t=ji.total!=null?ji.total:0;
+    const est=(ji.dec&&/^No/i.test(ji.dec))||t<60?'no':'ok';
+    h+=_etapa(3,'Entrevista — Jefe inmediato',est,`${t}/100`,
+      _kv([['Jefe evaluador',_val(ji.jefe)],['Modalidad',_val(ji.modal)],['Decisión del jefe',_val(ji.dec)],['Mínimo para pasar','60/100']])+
+      _items(JI_N,ji.scores,ji.obs,25)+_txt('Observaciones generales del jefe',ji.obsGen));
+  }
 
-  if(r.etapaDetenida){
-    h+=`<div style="background:#ffebee;border:1px solid #ffcdd2;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#c62828">
-      <strong>Motivo NO APTO:</strong> ${r.etapaDetenida}</div>`;
+  // 4. Evaluación técnica
+  const tec=et.tec;
+  if(_vacio(tec)) h+=_etapa(4,'Evaluación técnica del cargo','na','',_VACIO);
+  else{
+    const t=tec.total!=null?tec.total:0;
+    h+=_etapa(4,'Evaluación técnica del cargo',t>=65?'ok':'no',`${t}/100`,
+      _kv([['Tipo de evaluación',_val(tec.tipo)],['Duración',tec.dur?esc(tec.dur)+' min':'—'],['Mínimo para pasar','65/100']])+
+      _txt('Descripción del ejercicio aplicado',tec.desc)+
+      _items(tec.names,tec.scores,null,25)+_txt('Observaciones del jefe evaluador',tec.obsGen));
   }
-  if(r.decision){
-    h+=`<div style="background:#f8f8f8;border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:10px">
-      <strong style="color:#B11E29">Decisión final documentada:</strong><br><span style="color:#444">${r.decision}</span></div>`;
+
+  // 5. Psicotécnicas
+  const beh=et.beh;
+  if(_vacio(beh)) h+=_etapa(5,'Pruebas psicotécnicas — competencias comportamentales','na','',_VACIO);
+  else{
+    const a=beh.avg!=null?beh.avg:0;
+    h+=_etapa(5,'Pruebas psicotécnicas — competencias comportamentales',a>=65?'ok':'no',`${a}%`,
+      _kv([['Firma aplicadora',_val(beh.firma)],['Fecha de aplicación',fmtFecha(beh.fecha)],['Promedio mínimo','65%']])+
+      _items(beh.names,beh.scores,null,null,'%')+_txt('Concepto general del informe de la firma',beh.obsGen));
   }
-  if(r.firmas){
-    h+=`<div style="font-size:11px;color:#888;border-top:1px solid #f0f0f0;padding-top:10px">
-      Firmas: <strong>${r.firmas.gh||'—'}</strong> (Coord. GH) &nbsp;·&nbsp; <strong>${r.firmas.da||'—'}</strong> (Dir. Administrativa)</div>`;
+
+  // 6. Polígrafo
+  const pol=et.pol;
+  if(_vacio(pol)) h+=_etapa(6,'Polígrafo / VSA','na','',_VACIO);
+  else{
+    const est=!pol.res?'na':/ENGA/i.test(pol.res)?'no':/CONDICION/i.test(pol.res)?'cond':'ok';
+    h+=_etapa(6,'Polígrafo / VSA',est,'',
+      _kv([['Empresa realizadora',_val(pol.firma)],['Fecha de aplicación',fmtFecha(pol.fecha)],['Resultado del informe',_val(pol.res)]])+
+      `<div class="det-txt"><span>Áreas evaluadas</span>${POL_AREAS.map(x=>'✓ '+x).join(' &nbsp;·&nbsp; ')}</div>`+
+      _txt('Observaciones del informe',pol.obs));
   }
-  // Show "Continuar" button if process is partial
+
+  // 7. Visita domiciliaria
+  const vis=et.vis;
+  if(_vacio(vis)) h+=_etapa(7,'Visita domiciliaria','na','',_VACIO);
+  else{
+    const t=vis.total!=null?vis.total:0;
+    h+=_etapa(7,'Visita domiciliaria',t>=60?'ok':'no',`${t}/100`,
+      _kv([['Empresa realizadora',_val(vis.emp)],['Fecha de la visita',fmtFecha(vis.fecha)],['Mínimo para pasar','60/100']])+
+      _items(VIS_N,vis.scores,vis.obs,25)+_txt('Concepto del profesional visitador',vis.obsGen));
+  }
+
+  // 8. Examen médico
+  const med=et.med;
+  if(_vacio(med)) h+=_etapa(8,'Examen médico ocupacional de ingreso','na','',_VACIO);
+  else{
+    const est=!med.res?'na':/^No apto/i.test(med.res)?'no':/condicionado/i.test(med.res)?'cond':'ok';
+    let exams=[];
+    try{ exams=(typeof EXAMENES!=='undefined'?(EXAMENES[r.cargo]||EXAMENES._base):[])||[]; }catch(e){ exams=[]; }
+    const lista=exams.length?`<div class="det-txt"><span>Exámenes definidos para el cargo</span>${exams.map(x=>`${x.req?'●':'○'} ${esc(x.n)}${x.req?'':' (opcional)'}`).join('<br>')}</div>`:'';
+    h+=_etapa(8,'Examen médico ocupacional de ingreso',est,'',
+      _kv([['IPS / médico ocupacional',_val(med.ips)],['Fecha del examen',fmtFecha(med.fecha)],['Concepto de aptitud',_val(med.res)]])+
+      lista+_txt('Restricciones o recomendaciones del médico',med.obs));
+  }
+
+  // Resultado final
+  h+=`<div class="det-sec">Resultado final del proceso</div>`;
+  if(r.etapaDetenida) h+=`<div class="pdf-blk" style="background:#ffebee;border:1px solid #ffcdd2;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#c62828;white-space:pre-wrap"><strong>Motivo NO APTO:</strong> ${esc(r.etapaDetenida)}</div>`;
+  h+=`<div class="det-etapa pdf-blk">
+    ${_kv([['Resultado',_val(r.resultado||'En proceso')],['Puntaje ponderado',r.ponderado!=null?esc(r.ponderado)+'%':'—']])}
+    ${r.decision?_txt('Decisión final documentada',r.decision):'<div class="det-vacio">Sin decisión final documentada.</div>'}
+    ${paraPDF?'':_kv([['Firma — Coordinadora Gestión Humana',_val(r.firmas&&r.firmas.gh)],['Firma — Directora Administrativa y Comercial',_val(r.firmas&&r.firmas.da)]]).replace('<div class="det-kv">','<div class="det-kv" style="border-bottom:none;border-top:1px solid #f2f2f2">')}
+  </div>`;
+  return h;
+}
+
+function verDet(id){
+  const db=getDB(); const r=db.find(x=>x.id===id); if(!r){showToast('⚠ Registro no encontrado.');return;}
+  currentDetId=id;
+  document.getElementById('modal-title').textContent=(r.nombre||'—')+' — '+(r.cargo||'—');
+  let h=detalleHTML(r);
   const isPartial=!r.resultado&&r.nombre;
   if(isPartial){
     h+=`<div style="background:#e3f2fd;border:1px solid #90caf9;border-radius:8px;padding:12px 14px;margin-top:12px;display:flex;align-items:center;justify-content:space-between">
@@ -2790,18 +3026,87 @@ function verDet(id){
     h+=`<div style="margin-top:12px;padding:8px 12px;background:#f8f8f8;border-radius:6px;font-size:11px;color:#888">
       📋 Este registro es de solo lectura. Para modificar datos, elimine el proceso y créelo nuevamente.</div>`;
   }
-
   document.getElementById('modal-body').innerHTML=h;
   document.getElementById('modal-det').classList.add('open');
+}
+
+// ══════════════════════════════════════════════════════════════
+// DESCARGAR PDF — reporte con encabezado institucional.
+// Abre el diálogo de impresión: elegir "Guardar como PDF".
+// ══════════════════════════════════════════════════════════════
+function descargarPDF(id){
+  if(!id){showToast('⚠ No se encontró el registro a exportar.');return;}
+  const r=getDB().find(x=>x.id===id); if(!r){showToast('⚠ Registro no encontrado.');return;}
+  const logoEl=document.querySelector('.nav-logo img');
+  const logo=logoEl?logoEl.src:'';
+  const hoy=new Date();
+  const gen=hoy.toLocaleDateString('es-CO')+' '+hoy.toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'});
+  const td='border:1px solid #999;padding:4px 8px;font-size:10px';
+  const h=`<div style="font-family:Calibri,'Segoe UI',sans-serif;color:#1a1a1a;max-width:780px;margin:0 auto">
+    <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+      <tr>
+        <td rowspan="3" style="${td};width:110px;text-align:center">${logo?`<img src="${logo}" style="max-width:90px;max-height:50px">`:'<b>ABAD</b>'}</td>
+        <td style="${td};text-align:center;font-family:Cambria,serif;font-weight:700;font-size:12px;color:#B11E29">SISTEMA DE GESTIÓN DE CALIDAD</td>
+        <td style="${td};width:170px"><b>Código:</b> SGC-GH-SEL-001</td>
+      </tr>
+      <tr>
+        <td style="${td};text-align:center;font-weight:700;font-size:11px">REGISTRO DEL PROCESO DE SELECCIÓN DE PERSONAL</td>
+        <td style="${td}"><b>Versión:</b> 10</td>
+      </tr>
+      <tr>
+        <td style="${td};text-align:center">Proceso: Gestión Humana</td>
+        <td style="${td}"><b>Generado:</b> ${gen}</td>
+      </tr>
+    </table>
+    <div style="font-size:15px;font-weight:700;margin-bottom:2px">${esc(r.nombre)||'—'}</div>
+    <div style="font-size:12px;color:#555;margin-bottom:12px">C.C. ${esc(r.cedula)||'—'} · ${esc(r.cargo)||'—'} · ${esc(r.sede)||'—'}</div>
+    ${detalleHTML(r,true)}
+    <div class="pdf-blk" style="display:flex;justify-content:space-between;gap:30px;margin-top:40px;font-size:11px">
+      <div style="flex:1;border-top:1px solid #333;padding-top:4px">Coordinadora Gestión Humana<br><b>${esc(r.firmas&&r.firmas.gh)||''}</b></div>
+      <div style="flex:1;border-top:1px solid #333;padding-top:4px">Directora Administrativa y Comercial<br><b>${esc(r.firmas&&r.firmas.da)||''}</b></div>
+    </div>
+    <div style="text-align:center;font-size:9px;color:#999;margin-top:16px">Registro de información documentada del SGC (ISO 9001:2015 num. 7.5) · Abad Laboratorio S.A.S. · Generado por el Sistema de Selección de Personal SGC-GH-SEL-001</div>
+  </div>`;
+  const area=document.getElementById('print-area');
+  area.innerHTML=h;
+  document.body.classList.add('printing');
+  const tituloPrevio=document.title;
+  document.title='Seleccion_'+(r.nombre||'Candidato').replace(/[^\wÁÉÍÓÚÑáéíóúñ]+/g,'_')+'_'+(r.resultado||'EN_PROCESO').replace(/\s+/g,'_');
+  const limpiar=()=>{
+    document.body.classList.remove('printing');
+    area.innerHTML='';
+    document.title=tituloPrevio;
+    window.removeEventListener('afterprint',limpiar);
+  };
+  window.addEventListener('afterprint',limpiar);
+  setTimeout(()=>window.print(),200);
 }
 
 
 function closeModal(){document.getElementById('modal-det').classList.remove('open');}
 document.getElementById('modal-det').addEventListener('click',function(e){if(e.target===this)closeModal();});
 
-function eliminar(id){
-  if(!confirm('¿Eliminar este proceso? Esta acción no se puede deshacer.'))return;
-  saveDB(getDB().filter(r=>r.id!==id));renderPanel();
+async function eliminar(id){
+  if(!id){showToast('⚠ No se pudo identificar el registro a eliminar.');return;}
+  const r=getDB().find(x=>x.id===id);
+  const nom=r&&r.nombre?r.nombre:'este proceso';
+  if(!confirm(`¿Eliminar ${nom}? Esta acción no se puede deshacer.`))return;
+  if(!spReady){ showToast('⚠ Debe estar conectado a SharePoint para eliminar. Haga clic en "Conectar" e inténtelo de nuevo.'); return; }
+  showLoading('Eliminando registro...','Actualizando SharePoint');
+  try{
+    _deletedIds.add(id);
+    if(_spSaveChain[id]){ try{ await _spSaveChain[id]; }catch(err){} }   // espera guardados pendientes
+    const n=await spDeleteSeleccionAll(id);
+    localStorage.setItem(DB_KEY,JSON.stringify(getDB().filter(x=>x.id!==id)));
+    if(currentId===id) currentId=null;
+    closeModal();
+    refreshAllViews();
+    showToast(n>0?`✓ Proceso eliminado de SharePoint (${n} ítem${n>1?'s':''})`:'✓ Proceso eliminado (no existía en SharePoint)');
+  }catch(e){
+    _deletedIds.delete(id);
+    console.error('Error eliminando proceso:',e);
+    showToast('⚠ No se pudo eliminar en SharePoint: '+(e.message||'desconocido').substring(0,140));
+  }finally{ hideLoading(); }
 }
 
 // ══════════════════════════ INIT ══════════
